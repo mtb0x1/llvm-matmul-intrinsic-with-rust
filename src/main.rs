@@ -1,5 +1,6 @@
 mod llvm;
-use llvm::ll_matmul_jit;
+use llvm::ll_matmul_builtin;
+use llvm::ll_matmul_jit_with_template;
 
 // pointers are valid and aligned ?
 // a and b are 4x4 matrices
@@ -37,11 +38,14 @@ fn main() {
     let b_shape = (3, 4);
 
     let _result_shape = (2, 4);
-    let result = unsafe { ll_matmul_jit(&a, a_shape, &b, b_shape) };
-    println!("LLVM GENERIC\t(2x3 * 3x2)      : {:?}", result);
+    let result = unsafe { ll_matmul_jit_with_template(&a, a_shape, &b, b_shape, None) };
+    println!("LLVM JIT WITH TEMPLATE (2x3 * 3x2)      : {:?}", result);
 
-    let c_native = native_matmul(&a, a_shape, &b, b_shape);
-    println!("Native GENERIC\t(2x3 * 3x2)      : {:?}", c_native);
+    // let result = unsafe { ll_matmul_builtin(&a, a_shape, &b, b_shape) };
+    // println!("LLVM BUILTIN\t(2x3 * 3x2)      : {:?}", result);
+
+    let result = native_matmul(&a, a_shape, &b, b_shape);
+    println!("Native GENERIC         (2x3 * 3x2)      : {:?}", result);
 
     // 4x4 * 4x4 = (4x4)
     let a: [f32; 16] = [
@@ -50,21 +54,18 @@ fn main() {
     let b: [f32; 16] = [
         16., 15., 14., 13., 12., 11., 10., 9., 8., 7., 6., 5., 4., 3., 2., 1.,
     ];
-
-    let c_native = native_matmul(&a, (4, 4), &b, (4, 4));
-
-    println!("Native 4x4\t\t : {:?}", c_native);
+    let result = native_matmul(&a, (4, 4), &b, (4, 4));
+    println!("Native 4x4                              : {:?}", result);
 
     let mut result = [0.0f32; 16];
     assert!(result.iter().all(|f| *f == 0.0f32));
     unsafe { ll_matmul_4x4_unrolled(a.as_ptr(), b.as_ptr(), result.as_mut_ptr()) };
-    println!("LLVM unrolled 4x4\t : {:?}", result);
+    println!("LLVM unrolled 4x4                       : {:?}", result);
 
-    // reset c (using same a and b)
     let mut result = [0.0f32; 16];
     assert!(result.iter().all(|f| *f == 0.0f32));
     unsafe { ll_matmul_4x4_using_transpose(a.as_ptr(), b.as_ptr(), result.as_mut_ptr()) };
-    println!("LLVM transpose 4x4\t : {:?}", result);
+    println!("LLVM transpose 4x4                      : {:?}", result);
 }
 
 #[cfg(test)]
@@ -97,7 +98,7 @@ mod tests {
         let a_shape = (2, 3);
         let b = [16., 15., 14., 13., 12., 11., 10., 9., 8., 7., 6., 5.];
         let b_shape = (3, 4);
-        let c_generic = unsafe { ll_matmul_jit(&a, a_shape, &b, b_shape) };
+        let c_generic = unsafe { ll_matmul_jit_with_template(&a, a_shape, &b, b_shape, None) };
 
         use ndarray::Array2;
         let a_ndarray = Array2::from_shape_vec((2, 3), a.to_vec())
@@ -157,4 +158,10 @@ mod tests {
 
         assert_vec_eq(&c_transposed, &c_unrolled, 1e-4);
     }
+
+    //FIXME:
+    // add test for built-in
+    // empty arrays ?
+    // overflow ?
+    // underflow ?
 }

@@ -22,17 +22,15 @@ thread_local! {
 }
 
 // template to be udated at runtime
-// it seems that m, n, k needs to be consts in llvm api
-// TODO : check how backend compiler does it ? ( if this really needs to be const)
-
 // Matrix multiplication (row major in rust, column major in llvm):
 // I guess this needs a FIXME, but for now it doesn't worth the hassel
 //  C(m×n) = A(m×k) * B(k×n)
-pub unsafe fn ll_matmul_jit(
+pub unsafe fn ll_matmul_jit_with_template(
     a: &[f32],
     a_shape: (usize, usize),
     b: &[f32],
     b_shape: (usize, usize),
+    ir_template: Option<&str>,
 ) -> Vec<f32> {
     let m = a_shape.0;
     let n = b_shape.1;
@@ -48,8 +46,10 @@ pub unsafe fn ll_matmul_jit(
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 // We compile and insert into the cache
-                let compiled_func =
-                    unsafe { compile_matmul_jit(m, n, k).expect("JIT Compilation failed") };
+                let compiled_func = unsafe {
+                    compile_matmul_jit_with_template(m, n, k, ir_template)
+                        .expect("JIT Compilation failed")
+                };
                 entry.insert(compiled_func.clone());
                 compiled_func
             }
@@ -61,6 +61,7 @@ pub unsafe fn ll_matmul_jit(
     let mut result = vec![0.0; m * n];
 
     unsafe {
+        //println!("calling ll_matmul_jit");
         ll_matmul_jit.call(
             a_col_major.as_ptr(),
             b_col_major.as_ptr(),
@@ -71,16 +72,33 @@ pub unsafe fn ll_matmul_jit(
     col_major_to_row_major(&result, m, n)
 }
 
-const IR_TEMPLATE: &str = include_str!("matmul_ll_template.tmpl");
+const DEFAULT_IR_TEMPLATE: &str = include_str!("matmul_intrinsic_naive.tmpl");
 
-unsafe fn compile_matmul_jit(
+unsafe fn compile_matmul_jit_with_template(
     m: usize,
     n: usize,
     k: usize,
+    ir_template: Option<&str>,
 ) -> Option<JitFunction<'static, LlMatmulJitSig>> {
     //println!("compiling matmul_jit for m={}, n={}, k={}", m, n, k);
 
-    let ir_runtime = IR_TEMPLATE
+    let ir_runtime = ir_template
+        .unwrap_or_else(|| {
+            eprintln!(
+                r#" 
+// You are using `DEFAULT_IR_TEMPLATE` (naive)
+// with size of ({m}x{n} * {k}x{n})
+// when targeting non specilized hardware (CPU),
+// opt will go crazy and try to lower intrinsics to the lowest level possible
+// and this will make the code explode in size
+// and lead to oom
+// so we need to have a threshold (32 in my case)
+// up to you to check which value is best for you
+// you can play with examples/debug_large_matmul.rs to check which value is best for you
+"#
+            );
+            DEFAULT_IR_TEMPLATE
+        })
         .replace("{M}", &m.to_string())
         .replace("{N}", &n.to_string())
         .replace("{K}", &k.to_string())
@@ -90,6 +108,8 @@ unsafe fn compile_matmul_jit(
         .replace("{A_STRIDE}", &m.to_string())
         .replace("{B_STRIDE}", &k.to_string())
         .replace("{C_STRIDE}", &m.to_string());
+
+    //println!("IR instantiated:\n{}", ir_runtime);
 
     // FIXME: memory to watch for I guess ?
     // probably a struct where a context (or list of those) lives along side with jit functions cache.
@@ -119,25 +139,35 @@ unsafe fn compile_matmul_jit(
     };
     let machine = match target.create_target_machine(
         &triple,
-        //TODO : Add cpu features as optionals
-        "generic", //TargetMachine::get_host_cpu_name().to_string().as_str(),
-        "",        //TargetMachine::get_host_cpu_features().to_string().as_str(),
-        OptimizationLevel::Default,
-        RelocMode::Default,
-        CodeModel::Default,
+        TargetMachine::get_host_cpu_name()
+            .to_str()
+            .expect("host cpu name"), // FIXME: is this same as native ?
+        "+avx2,+fma",
+        OptimizationLevel::Aggressive,
+        RelocMode::PIC,
+        CodeModel::JITDefault,
     ) {
         Some(tm) => tm,
         None => panic!("couldn't create target machine"),
     };
 
     let pass_options = PassBuilderOptions::create();
+    // TODO : this pass fails set to true
+    // needs FIXME ?
     pass_options.set_verify_each(false);
     #[cfg(debug_assertions)]
     pass_options.set_debug_logging(true);
+
+    // https://llvm.org/docs/NewPassManager.html#invoking-opt
+    // opt --help
+    // the 4 next passes are most have for matrix multiplication
     pass_options.set_loop_interleaving(true);
     pass_options.set_loop_vectorization(true);
     pass_options.set_loop_slp_vectorization(true);
     pass_options.set_loop_unrolling(true);
+
+    // don't know about these
+    // we need to align with build.rs
     pass_options.set_forget_all_scev_in_loop_unroll(true);
     pass_options.set_licm_mssa_opt_cap(1);
     pass_options.set_licm_mssa_no_acc_for_promotion_cap(10);
@@ -145,12 +175,14 @@ unsafe fn compile_matmul_jit(
     pass_options.set_merge_functions(true);
 
     unsafe {
+        //println!("running passes");
         let error = llvm_sys::transforms::pass_builder::LLVMRunPasses(
             module.as_mut_ptr(),
             c"lower-matrix-intrinsics".as_ptr(),
             machine.as_mut_ptr(),
             pass_options.as_mut_ptr(),
         );
+        //println!("passes run done");
         if !error.is_null() {
             let message = LLVMGetErrorMessage(error);
             if !message.is_null() {
@@ -163,15 +195,20 @@ unsafe fn compile_matmul_jit(
         }
     };
 
+    //println!("IR lowered:\n{}", module.print_to_string());
+
     let execution_engine = module
         .create_jit_execution_engine(OptimizationLevel::Aggressive)
         .expect("Failed to create JIT execution engine");
+
+    //println!("execution_engine created");
 
     let ll_matmul_jit: JitFunction<LlMatmulJitSig> = unsafe {
         execution_engine
             .get_function("ll_matmul_jit")
             .expect("Failed to find JIT function")
     };
+    //println!("ll_matmul_jit found");
     Some(ll_matmul_jit)
 }
 

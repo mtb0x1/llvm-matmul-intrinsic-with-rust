@@ -17,6 +17,9 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
         .arg(ll_file);
     if is_debug {
         opt_command.arg("--debug-entry-values");
+        opt_command.arg("-print-after=lower-matrix-intrinsics");
+    } else {
+        opt_command.arg("--thinlto-bc");
     }
 
     let status = opt_command
@@ -34,6 +37,8 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
     // even my grandma can execute.
     let mut llc_command = Command::new("llc");
     llc_command
+        .arg("-mattr=+avx2,+fma")
+        .arg("-mcpu=native")
         .arg("--relocation-model=pic")
         .arg("-filetype=obj")
         .arg("-o")
@@ -42,6 +47,13 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
     if is_debug {
         llc_command.arg("--asm-verbose");
         llc_command.arg("--debug-entry-values");
+        llc_command.arg("--debugger-tune=gdb");
+        // TODO : switch all to row major
+        //llc_command.arg("--matrix-default-layout=column-major"); // row-major
+
+        // we can add bunch of fp flags if need to
+        //llc_command.arg("-print-asm-code");
+        //llc_command.arg("-time-passes");
     } else {
         llc_command.arg("-O3");
     }
