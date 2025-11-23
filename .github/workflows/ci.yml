@@ -40,3 +40,5 @@ jobs:
         run: cargo test --verbose
       - name: Run
         run: cargo run --release
+      - name: Bench
+        run: cargo bench
