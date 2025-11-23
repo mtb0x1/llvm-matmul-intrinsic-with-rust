@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: Install LLVM 21
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          # The script argument is the major version (21)
+          # This automatically pulls the latest stable (e.g., 21.1.x)
+          sudo ./llvm.sh 21 all
+          sudo apt install llvm llvm-dev clang
+          sudo ldconfig
+
+      - name: Check binaries
+        run: |
+          clang --version
+          which opt
+          which llc
+          opt --version
+          llc --version
+
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        run: cargo test --verbose
+      - name: Run
+        run: cargo run --release
