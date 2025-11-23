@@ -1,0 +1,17 @@
+define void @ll_matmul_jit(float* %a, float* %b, float* %result) {
+entry:
+  ; load matrix
+  %a_mat = call <{VEC_A_SIZE} x float> @llvm.matrix.column.major.load.v{VEC_A_SIZE}f32.p0f32(float* %a, i64 {A_STRIDE}, i1 false, i32 {M}, i32 {K})
+  
+  ; load matrix
+  %b_mat = call <{VEC_B_SIZE} x float> @llvm.matrix.column.major.load.v{VEC_B_SIZE}f32.p0f32(float* %b, i64 {B_STRIDE}, i1 false, i32 {K}, i32 {N})
+  
+  ; mult matrixs
+  %c_mat = call <{VEC_C_SIZE} x float> @llvm.matrix.multiply.v{VEC_C_SIZE}f32.v{VEC_A_SIZE}f32.v{VEC_B_SIZE}f32(<{VEC_A_SIZE} x float> %a_mat, <{VEC_B_SIZE} x float> %b_mat, i32 {M}, i32 {K}, i32 {N})
+  
+  ; save resukt
+  ; not sure about the i64 {VEC_C_SIZE}
+  call void @llvm.matrix.column.major.store.v{VEC_C_SIZE}f32.p0f32(<{VEC_C_SIZE} x float> %c_mat, float* %result, i64 {C_STRIDE}, i1 false, i32 {M}, i32 {N})
+
+  ret void
+}
