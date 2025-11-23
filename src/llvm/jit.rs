@@ -71,6 +71,8 @@ pub unsafe fn ll_matmul_jit(
     col_major_to_row_major(&result, m, n)
 }
 
+const IR_TEMPLATE: &str = include_str!("matmul_ll_template.tmpl");
+
 unsafe fn compile_matmul_jit(
     m: usize,
     n: usize,
@@ -78,9 +80,7 @@ unsafe fn compile_matmul_jit(
 ) -> Option<JitFunction<'static, LlMatmulJitSig>> {
     //println!("compiling matmul_jit for m={}, n={}, k={}", m, n, k);
 
-    let ir_template: &str = include_str!("matmul_ll_template.tmpl");
-
-    let ir_runtime = ir_template
+    let ir_runtime = IR_TEMPLATE
         .replace("{M}", &m.to_string())
         .replace("{N}", &n.to_string())
         .replace("{K}", &k.to_string())

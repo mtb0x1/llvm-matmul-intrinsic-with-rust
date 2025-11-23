@@ -1,6 +1,5 @@
 mod llvm;
 use llvm::ll_matmul_jit;
-use ndarray::Array2;
 
 // pointers are valid and aligned ?
 // a and b are 4x4 matrices
@@ -10,6 +9,24 @@ unsafe extern "C" {
     unsafe fn ll_matmul_4x4_using_transpose(a: *const f32, b: *const f32, result: *mut f32);
     #[link_name = "ll_matmul_4x4_unrolled"]
     unsafe fn ll_matmul_4x4_unrolled(a: *const f32, b: *const f32, result: *mut f32);
+}
+
+fn native_matmul(a: &[f32], a_dims: (usize, usize), b: &[f32], b_dims: (usize, usize)) -> Vec<f32> {
+    let (m, k) = a_dims;
+    let (k2, n) = b_dims;
+    assert_eq!(k, k2, "Matrix dimensions must agree");
+
+    let mut result = vec![0.0; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0.0;
+            for p in 0..k {
+                sum += a[i * k + p] * b[p * n + j];
+            }
+            result[i * n + j] = sum;
+        }
+    }
+    result
 }
 
 fn main() {
@@ -23,15 +40,8 @@ fn main() {
     let result = unsafe { ll_matmul_jit(&a, a_shape, &b, b_shape) };
     println!("LLVM GENERIC\t(2x3 * 3x2)      : {:?}", result);
 
-    let a_ndarray = Array2::from_shape_vec(a_shape, a.to_vec())
-        .expect("A shape must match the number of elements");
-    let b_ndarray = Array2::from_shape_vec(b_shape, b.to_vec())
-        .expect("B shape must match the number of elements");
-    let c_ndarray = a_ndarray.dot(&b_ndarray);
-    let c_ndarray = c_ndarray
-        .as_slice()
-        .expect("failed to get slice from C ndarray");
-    println!("Ndarray GENERIC\t(2x3 * 3x2)      : {:?}", c_ndarray);
+    let c_native = native_matmul(&a, a_shape, &b, b_shape);
+    println!("Native GENERIC\t(2x3 * 3x2)      : {:?}", c_native);
 
     // 4x4 * 4x4 = (4x4)
     let a: [f32; 16] = [
@@ -41,16 +51,9 @@ fn main() {
         16., 15., 14., 13., 12., 11., 10., 9., 8., 7., 6., 5., 4., 3., 2., 1.,
     ];
 
-    let a_ndarray = Array2::from_shape_vec((4, 4), a.to_vec())
-        .expect("A shape must match the number of elements");
-    let b_ndarray = Array2::from_shape_vec((4, 4), b.to_vec())
-        .expect("B shape must match the number of elements");
-    let c_ndarray = a_ndarray.dot(&b_ndarray);
-    let c_ndarray = c_ndarray
-        .as_slice()
-        .expect("failed to get slice from C ndarray");
+    let c_native = native_matmul(&a, (4, 4), &b, (4, 4));
 
-    println!("Ndarray 4x4\t\t : {:?}", c_ndarray);
+    println!("Native 4x4\t\t : {:?}", c_native);
 
     let mut result = [0.0f32; 16];
     assert!(result.iter().all(|f| *f == 0.0f32));
