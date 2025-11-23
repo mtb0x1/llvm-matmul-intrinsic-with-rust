@@ -13,7 +13,6 @@ unsafe extern "C" {
 }
 
 fn main() {
-
     // 2x3 * 3x4 = (2x4)
     let a = [1., 2., 3., 4., 5., 6.];
     let a_shape = (2, 3);
@@ -23,7 +22,6 @@ fn main() {
     let _result_shape = (2, 4);
     let result = unsafe { ll_matmul_jit(&a, a_shape, &b, b_shape) };
     println!("LLVM GENERIC\t(2x3 * 3x2)      : {:?}", result);
-
 
     let a_ndarray = Array2::from_shape_vec(a_shape, a.to_vec())
         .expect("A shape must match the number of elements");

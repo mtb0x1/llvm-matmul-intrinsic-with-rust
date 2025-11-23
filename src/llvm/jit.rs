@@ -20,7 +20,7 @@ type LlMatmulJitSig = unsafe extern "C" fn(*const f32, *const f32, *mut f32);
 // Matrix multiplication (row major in rust, column major in llvm):
 // I guess this needs a FIXME, but for now it doesn't worth the hassel
 //  C(m×n) = A(m×k) * B(k×n)
-pub(crate) unsafe fn ll_matmul_jit(
+pub unsafe fn ll_matmul_jit(
     a: &[f32],
     a_shape: (usize, usize),
     b: &[f32],
@@ -144,7 +144,10 @@ pub(crate) unsafe fn ll_matmul_jit(
 /// Input: src - flat row-major matrix (m x n)
 /// Output: flat column-major matrix (m x n)
 pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
-    assert!(!src.is_empty(), "row_major_to_col_major :: `src` can't be empty");
+    assert!(
+        !src.is_empty(),
+        "row_major_to_col_major :: `src` can't be empty"
+    );
     let mut dst = vec![0.0; m * n];
     for row in 0..m {
         for col in 0..n {
@@ -158,7 +161,10 @@ pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32
 /// Input: src - flat column-major matrix (m x n)
 /// Output: flat row-major matrix (m x n)
 pub(crate) fn col_major_to_row_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
-    assert!(!src.is_empty(), "col_major_to_row_major :: `src` can't be empty");
+    assert!(
+        !src.is_empty(),
+        "col_major_to_row_major :: `src` can't be empty"
+    );
     let mut dst = vec![0.0; m * n];
     for row in 0..m {
         for col in 0..n {

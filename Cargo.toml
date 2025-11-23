@@ -9,3 +9,9 @@ ndarray = "0.17.1"
 
 [dev-dependencies]
 criterion = "0.7.0"
+matrixmultiply = "0.3.8"
+faer = "0.19.2"
+
+[[bench]]
+name = "matmul_4x4_bench"
+harness = false
