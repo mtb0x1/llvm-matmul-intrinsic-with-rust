@@ -28,42 +28,12 @@ cargo test
 ## Benchmark
 
 ```console
-ll_matmul_4x4_unrolled  time:   [35.444 ns 35.493 ns 35.555 ns]
-Found 6 outliers among 100 measurements (6.00%)
-  1 (1.00%) low severe
-  1 (1.00%) low mild
-  1 (1.00%) high mild
-  3 (3.00%) high severe
-
-ll_matmul_4x4_using_transpose
-                        time:   [23.005 ns 23.052 ns 23.103 ns]
-Found 6 outliers among 100 measurements (6.00%)
-  1 (1.00%) low mild
-  3 (3.00%) high mild
-  2 (2.00%) high severe
-
-ndarray_dot             time:   [138.61 ns 138.87 ns 139.18 ns]
-Found 9 outliers among 100 measurements (9.00%)
-  2 (2.00%) low mild
-  5 (5.00%) high mild
-  2 (2.00%) high severe
-
-matrixmultiply_sgemm    time:   [81.371 ns 81.581 ns 81.835 ns]
-Found 8 outliers among 100 measurements (8.00%)
-  3 (3.00%) low mild
-  1 (1.00%) high mild
-  4 (4.00%) high severe
-
-faer_matmul             time:   [130.19 ns 131.46 ns 132.65 ns]
-Found 16 outliers among 100 measurements (16.00%)
-  11 (11.00%) high mild
-  5 (5.00%) high severe
-
-ll_matmul_jit_generic   time:   [2.1640 ms 2.1889 ms 2.2207 ms]
-Found 10 outliers among 100 measurements (10.00%)
-  4 (4.00%) high mild
-  6 (6.00%) high severe
-
+ll_matmul_4x4_using_transpose  time:   [19.854 ns 19.940 ns 20.121 ns]
+ll_matmul_4x4_unrolled         time:   [27.314 ns 27.393 ns 27.520 ns]
+matrixmultiply_sgemm  (4x4)    time:   [81.371 ns 81.404 ns 81.440 ns]
+ndarray_dot           (4x4)    time:   [99.155 ns 99.513 ns 100.23 ns]
+faer_matmul           (4x4)    time:   [100.80 ns 100.90 ns 101.01 ns]
+ll_matmul_jit_generic (4x4)    time:   [176.33 ns 177.01 ns 178.00 ns]
 ```
 
 ## Note

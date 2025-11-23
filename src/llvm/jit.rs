@@ -1,4 +1,6 @@
 use core::panic;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CStr;
 
 use inkwell::OptimizationLevel;
@@ -8,10 +10,16 @@ use inkwell::llvm_sys;
 use inkwell::llvm_sys::core::LLVMDisposeMessage;
 use inkwell::llvm_sys::error::LLVMGetErrorMessage;
 use inkwell::memory_buffer::MemoryBuffer;
+use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, RelocMode, Target, TargetMachine};
+use std::collections::hash_map::Entry;
 
 type LlMatmulJitSig = unsafe extern "C" fn(*const f32, *const f32, *mut f32);
+
+thread_local! {
+    static JIT_FUNCTIONS: RefCell<HashMap<(usize, usize, usize), JitFunction<'static,LlMatmulJitSig>>> = RefCell::new(HashMap::new());
+}
 
 // template to be udated at runtime
 // it seems that m, n, k needs to be consts in llvm api
@@ -31,9 +39,44 @@ pub unsafe fn ll_matmul_jit(
     let k = a_shape.1; // or b_shape.0
     assert!(a_shape.1 == b_shape.0, "shapes dosn't match");
 
-    let a = &row_major_to_col_major(a, a_shape.0, a_shape.1)[..];
-    let b = &row_major_to_col_major(b, b_shape.0, b_shape.1)[..];
+    let shape_key = (m, n, k);
+
+    // FIXME: can we avoid the cloning in here ?
+    let ll_matmul_jit = JIT_FUNCTIONS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        match map.entry(shape_key) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                // We compile and insert into the cache
+                let compiled_func =
+                    unsafe { compile_matmul_jit(m, n, k).expect("JIT Compilation failed") };
+                entry.insert(compiled_func.clone());
+                compiled_func
+            }
+        }
+    });
+
+    let a_col_major = row_major_to_col_major(a, a_shape.0, a_shape.1);
+    let b_col_major = row_major_to_col_major(b, b_shape.0, b_shape.1);
     let mut result = vec![0.0; m * n];
+
+    unsafe {
+        ll_matmul_jit.call(
+            a_col_major.as_ptr(),
+            b_col_major.as_ptr(),
+            result.as_mut_ptr(),
+        );
+    }
+
+    col_major_to_row_major(&result, m, n)
+}
+
+unsafe fn compile_matmul_jit(
+    m: usize,
+    n: usize,
+    k: usize,
+) -> Option<JitFunction<'static, LlMatmulJitSig>> {
+    //println!("compiling matmul_jit for m={}, n={}, k={}", m, n, k);
 
     let ir_template: &str = include_str!("matmul_ll_template.tmpl");
 
@@ -48,12 +91,12 @@ pub unsafe fn ll_matmul_jit(
         .replace("{B_STRIDE}", &k.to_string())
         .replace("{C_STRIDE}", &m.to_string());
 
-    let context: Context = Context::create();
-
-    //println!("LLVM IR before lowring : \n{}", ir_runtime);
+    // FIXME: memory to watch for I guess ?
+    // probably a struct where a context (or list of those) lives along side with jit functions cache.
+    let context = Box::leak(Box::new(Context::create()));
 
     let buffer = MemoryBuffer::create_from_memory_range_copy(ir_runtime.as_bytes(), "matmul_ir");
-    let module = context
+    let module: Module<'static> = context
         .create_module_from_ir(buffer)
         .expect("Failed to parse LLVM IR");
 
@@ -64,7 +107,6 @@ pub unsafe fn ll_matmul_jit(
     // llc the lowered ll code
 
     // the lowering pass code is a rip off of https://github.com/TheDan64/inkwell
-
     Target::initialize_all(&Default::default());
     let triple = TargetMachine::get_default_triple();
     let target = match Target::from_triple(&triple) {
@@ -87,6 +129,7 @@ pub unsafe fn ll_matmul_jit(
         Some(tm) => tm,
         None => panic!("couldn't create target machine"),
     };
+
     let pass_options = PassBuilderOptions::create();
     pass_options.set_verify_each(false);
     #[cfg(debug_assertions)]
@@ -100,12 +143,13 @@ pub unsafe fn ll_matmul_jit(
     pass_options.set_licm_mssa_no_acc_for_promotion_cap(10);
     pass_options.set_call_graph_profile(true);
     pass_options.set_merge_functions(true);
+
     unsafe {
         let error = llvm_sys::transforms::pass_builder::LLVMRunPasses(
             module.as_mut_ptr(),
             c"lower-matrix-intrinsics".as_ptr(),
             machine.as_mut_ptr(),
-            pass_options.as_mut_ptr(), // pass raw pointer for PassBuilderOptions
+            pass_options.as_mut_ptr(),
         );
         if !error.is_null() {
             let message = LLVMGetErrorMessage(error);
@@ -119,10 +163,6 @@ pub unsafe fn ll_matmul_jit(
         }
     };
 
-    // for func in module.get_functions() {
-    //     println!("LLVM IR after lowring : \n{}", func);
-    // }
-
     let execution_engine = module
         .create_jit_execution_engine(OptimizationLevel::Aggressive)
         .expect("Failed to create JIT execution engine");
@@ -132,17 +172,13 @@ pub unsafe fn ll_matmul_jit(
             .get_function("ll_matmul_jit")
             .expect("Failed to find JIT function")
     };
-
-    unsafe { ll_matmul_jit.call(a.as_ptr(), b.as_ptr(), result.as_mut_ptr()) };
-    //println!("Result after ll_matmul_jit call {:?}", result);
-    let result = col_major_to_row_major(&result, a_shape.0, b_shape.1);
-    //println!("Result after col_major_to_row_major call {:?}", result);
-    result
+    Some(ll_matmul_jit)
 }
 
 /// Converts a matrix from row-major to column-major order.
 /// Input: src - flat row-major matrix (m x n)
 /// Output: flat column-major matrix (m x n)
+#[inline(always)]
 pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
     assert!(
         !src.is_empty(),
@@ -160,6 +196,7 @@ pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32
 /// Converts a matrix from column-major to row-major order.
 /// Input: src - flat column-major matrix (m x n)
 /// Output: flat row-major matrix (m x n)
+#[inline(always)]
 pub(crate) fn col_major_to_row_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
     assert!(
         !src.is_empty(),

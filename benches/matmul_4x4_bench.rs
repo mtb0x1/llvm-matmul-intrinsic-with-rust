@@ -30,7 +30,7 @@ fn bench_matmul_4x4(c: &mut Criterion) {
 
     let a_faer = Mat::from_fn(4, 4, |i, j| a[i * 4 + j]);
     let b_faer = Mat::from_fn(4, 4, |i, j| b[i * 4 + j]);
-    
+
     c.bench_function("ll_matmul_4x4_unrolled", |bencher| {
         bencher.iter(|| {
             let mut result = black_box([0.0f32; 16]);
