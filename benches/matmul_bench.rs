@@ -1,20 +1,11 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_builtin;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_jit_with_template;
+use llvm_matmul_intrinsic_with_rust::{
+    common::generate_random_matrix, ll_matmul_jit_with_template,
+};
 use matrixmultiply::sgemm;
 use ndarray::Array2;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 use std::hint::black_box;
-
-fn generate_random_matrix(rows: usize, cols: usize, seed: u64) -> Vec<f32> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    (0..rows * cols)
-        .map(|_| rng.random_range(1f32..255f32))
-        .collect()
-}
 const SEED: u64 = 42;
 
 fn bench_matmul_small(c: &mut Criterion) {

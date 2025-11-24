@@ -5,13 +5,13 @@ edition = "2024"
 
 [dependencies]
 inkwell = { version = "0.7.1", features = ["llvm21-1"] }
+rand = "0.9"
 
 [dev-dependencies]
 ndarray = "0.17"
 criterion = "0.7"
 matrixmultiply = "0.3"
 faer = "0.23.2"
-rand = "0.9"
 
 [[bench]]
 name = "matmul_4x4_bench"

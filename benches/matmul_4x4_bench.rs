@@ -1,6 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_builtin;
 use llvm_matmul_intrinsic_with_rust::ll_matmul_jit_with_template;
 use matrixmultiply::sgemm;
 use ndarray::Array2;
@@ -14,7 +13,6 @@ unsafe extern "C" {
 }
 
 fn bench_matmul_4x4(c: &mut Criterion) {
-    // Create random 4x4 matrices
     let a: [f32; 16] = black_box([
         1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 15., 16.,
     ]);
