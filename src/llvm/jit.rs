@@ -32,10 +32,15 @@ pub unsafe fn ll_matmul_jit_with_template(
     b_shape: (usize, usize),
     ir_template: Option<&str>,
 ) -> Vec<f32> {
+    assert!(
+        a_shape.0 > 0 && a_shape.1 > 0 && b_shape.0 > 0 && b_shape.1 > 0,
+        "empty arrays are not supported"
+    );
+    assert!(a_shape.1 == b_shape.0, "shapes dosn't match");
+
     let m = a_shape.0;
     let n = b_shape.1;
     let k = a_shape.1; // or b_shape.0
-    assert!(a_shape.1 == b_shape.0, "shapes dosn't match");
 
     let shape_key = (m, n, k);
 
@@ -155,7 +160,7 @@ unsafe fn compile_matmul_jit_with_template(
     // TODO : this pass fails set to true
     // needs FIXME ?
     pass_options.set_verify_each(false);
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, test))]
     pass_options.set_debug_logging(true);
 
     // https://llvm.org/docs/NewPassManager.html#invoking-opt
