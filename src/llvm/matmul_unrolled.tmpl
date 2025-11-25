@@ -1,83 +1,110 @@
 define void @ll_matmul_jit(float* %a, float* %b, float* %result) {
 entry:
+  %m.vec.limit = and i32 {M}, -8
   br label %loop.j.head
 
 loop.j.head:
-  %j = phi i32 [ 0, %entry ], [ %j.next, %loop.j.exit ]
+  %j = phi i32 [ 0, %entry ], [ %j.next, %loop.i.exit ]
   %j.cond = icmp slt i32 %j, {N}
   br i1 %j.cond, label %loop.j.body, label %exit
 
 loop.j.body:
   %j.ext = zext i32 %j to i64
-  %c.stride.offset = mul i64 %j.ext, {C_STRIDE}
-  %b.stride.offset = mul i64 %j.ext, {B_STRIDE}
+  %b.col.offset = mul i64 %j.ext, {B_STRIDE}
+  %c.col.offset = mul i64 %j.ext, {C_STRIDE}
+  %b.base.ptr = getelementptr float, float* %b, i64 %b.col.offset
+  br label %loop.i.vec.head
 
-  ; int C column j to 0.0
-  br label %init.c.head
+loop.i.vec.head:
+  %i.vec = phi i32 [ 0, %loop.j.body ], [ %i.vec.next, %loop.k.vec.exit ]
+  %i.vec.cond = icmp slt i32 %i.vec, %m.vec.limit
+  br i1 %i.vec.cond, label %loop.i.vec.body, label %loop.i.scalar.preheader
 
-init.c.head:
-  %i.init = phi i32 [ 0, %loop.j.body ], [ %i.init.next, %init.c.body ]
-  %i.init.cond = icmp slt i32 %i.init, {M}
-  br i1 %i.init.cond, label %init.c.body, label %loop.k.head
+loop.i.vec.body:
+  %i.vec.ext = zext i32 %i.vec to i64
+  %accum.vec.init = insertelement <8 x float> undef, float 0.0, i32 0
+  %accum.vec = shufflevector <8 x float> %accum.vec.init, <8 x float> undef, <8 x i32> zeroinitializer
+  %a.vec.base.idx = add i64 0, %i.vec.ext
+  %a.vec.base.ptr = getelementptr float, float* %a, i64 %a.vec.base.idx
+  br label %loop.k.vec.head
 
-init.c.body:
-  %i.init.ext = zext i32 %i.init to i64
-  %c.init.idx = add i64 %c.stride.offset, %i.init.ext
-  %c.init.ptr = getelementptr float, float* %result, i64 %c.init.idx
-  store float 0.0, float* %c.init.ptr, align 4
+loop.k.vec.head:
+  %k.vec = phi i32 [ 0, %loop.i.vec.body ], [ %k.vec.next, %loop.k.vec.body ]
+  %accum.vec.curr = phi <8 x float> [ %accum.vec, %loop.i.vec.body ], [ %accum.vec.next, %loop.k.vec.body ]
+  %k.vec.cond = icmp slt i32 %k.vec, {K}
+  br i1 %k.vec.cond, label %loop.k.vec.body, label %loop.k.vec.exit
 
-  %i.init.next = add i32 %i.init, 1
-  br label %init.c.head
+loop.k.vec.body:
+  %k.vec.ext = zext i32 %k.vec to i64
+  %b.vec.ptr = getelementptr float, float* %b.base.ptr, i64 %k.vec.ext
+  %b.val = load float, float* %b.vec.ptr, align 4
+  %b.vec.0 = insertelement <8 x float> undef, float %b.val, i32 0
+  %b.vec.splat = shufflevector <8 x float> %b.vec.0, <8 x float> undef, <8 x i32> zeroinitializer
+  
+  %k.vec.stride = mul i64 %k.vec.ext, {A_STRIDE}
+  %a.vec.ptr.raw = getelementptr float, float* %a.vec.base.ptr, i64 %k.vec.stride
+  %a.vec.ptr = bitcast float* %a.vec.ptr.raw to <8 x float>*
+  %a.vec.val = load <8 x float>, <8 x float>* %a.vec.ptr, align 32
+  
+  %accum.vec.next = call <8 x float> @llvm.fmuladd.v8f32(<8 x float> %a.vec.val, <8 x float> %b.vec.splat, <8 x float> %accum.vec.curr)
+  
+  %k.vec.next = add i32 %k.vec, 1
+  br label %loop.k.vec.head
 
-loop.k.head:
-  %k = phi i32 [ 0, %init.c.head ], [ %k.next, %loop.k.exit ]
-  %k.cond = icmp slt i32 %k, {K}
-  br i1 %k.cond, label %loop.k.body, label %loop.j.exit
+loop.k.vec.exit:
+  %c.vec.idx = add i64 %c.col.offset, %i.vec.ext
+  %c.vec.ptr.raw = getelementptr float, float* %result, i64 %c.vec.idx
+  %c.vec.ptr = bitcast float* %c.vec.ptr.raw to <8 x float>*
+  store <8 x float> %accum.vec.curr, <8 x float>* %c.vec.ptr, align 32
+  
+  %i.vec.next = add i32 %i.vec, 8
+  br label %loop.i.vec.head
 
-loop.k.body:
-  %k.ext = zext i32 %k to i64
+loop.i.scalar.preheader:
+  br label %loop.i.scalar.head
 
-  ; load B[k, j]
-  %b.idx = add i64 %b.stride.offset, %k.ext
-  %b.ptr = getelementptr float, float* %b, i64 %b.idx
-  %b.val = load float, float* %b.ptr, align 4
+loop.i.scalar.head:
+  %i.scalar = phi i32 [ %m.vec.limit, %loop.i.scalar.preheader ], [ %i.scalar.next, %loop.k.scalar.exit ]
+  %i.scalar.cond = icmp slt i32 %i.scalar, {M}
+  br i1 %i.scalar.cond, label %loop.i.scalar.body, label %loop.i.exit
 
-  ; precompute A stride offset for this k
-  %a.stride.offset = mul i64 %k.ext, {A_STRIDE}
+loop.i.scalar.body:
+  %i.scalar.ext = zext i32 %i.scalar to i64
+  %a.scalar.base.idx = add i64 0, %i.scalar.ext
+  %a.scalar.base.ptr = getelementptr float, float* %a, i64 %a.scalar.base.idx
+  br label %loop.k.scalar.head
 
-  br label %loop.i.head
+loop.k.scalar.head:
+  %k.scalar = phi i32 [ 0, %loop.i.scalar.body ], [ %k.scalar.next, %loop.k.scalar.body ]
+  %accum.scalar = phi float [ 0.0, %loop.i.scalar.body ], [ %accum.scalar.next, %loop.k.scalar.body ]
+  %k.scalar.cond = icmp slt i32 %k.scalar, {K}
+  br i1 %k.scalar.cond, label %loop.k.scalar.body, label %loop.k.scalar.exit
 
-loop.i.head:
-  %i = phi i32 [ 0, %loop.k.body ], [ %i.next, %loop.i.body ]
-  %i.cond = icmp slt i32 %i, {M}
-  br i1 %i.cond, label %loop.i.body, label %loop.k.exit
+loop.k.scalar.body:
+  %k.scalar.ext = zext i32 %k.scalar to i64
+  %b.scalar.ptr = getelementptr float, float* %b.base.ptr, i64 %k.scalar.ext
+  %b.scalar.val = load float, float* %b.scalar.ptr, align 4
+  
+  %k.scalar.stride = mul i64 %k.scalar.ext, {A_STRIDE}
+  %a.scalar.ptr = getelementptr float, float* %a.scalar.base.ptr, i64 %k.scalar.stride
+  %a.scalar.val = load float, float* %a.scalar.ptr, align 4
+  
+  %prod.scalar = fmul float %a.scalar.val, %b.scalar.val
+  %accum.scalar.next = fadd float %accum.scalar, %prod.scalar
+  
+  %k.scalar.next = add i32 %k.scalar, 1
+  br label %loop.k.scalar.head
 
-loop.i.body:
-  %i.ext = zext i32 %i to i64
+loop.k.scalar.exit:
+  %c.scalar.idx = add i64 %c.col.offset, %i.scalar.ext
+  %c.scalar.ptr = getelementptr float, float* %result, i64 %c.scalar.idx
+  store float %accum.scalar, float* %c.scalar.ptr, align 4
+  
+  %i.scalar.next = add i32 %i.scalar, 1
+  br label %loop.i.scalar.head
 
-  ; load A[i, k]
-  %a.idx = add i64 %a.stride.offset, %i.ext
-  %a.ptr = getelementptr float, float* %a, i64 %a.idx
-  %a.val = load float, float* %a.ptr, align 4
-
-  ; load C[i, j]
-  %c.idx = add i64 %c.stride.offset, %i.ext
-  %c.ptr = getelementptr float, float* %result, i64 %c.idx
-  %c.val = load float, float* %c.ptr, align 4
-
-  ; compute
-  %prod = fmul float %a.val, %b.val
-  %res = fadd float %c.val, %prod
-  store float %res, float* %c.ptr, align 4
-
-  %i.next = add i32 %i, 1
-  br label %loop.i.head
-
-loop.k.exit:
-  %k.next = add i32 %k, 1
-  br label %loop.k.head
-
-loop.j.exit:
+; remove this ?
+loop.i.exit:
   %j.next = add i32 %j, 1
   br label %loop.j.head
 

@@ -3,7 +3,9 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 pub const TEMPLATE_ENV: &str = "LL_MATMUL_TEMPLATE";
+pub const TEMPLATE_ENV_FUNCTION_NAME: &str = "LL_MATMUL_TEMPLATE_FUNCTION_NAME";
 pub const DEFAULT_IR_TEMPLATE: &str = include_str!("llvm/matmul_intrinsic_naive.tmpl");
+pub const DEFAULT_FUNCTION_NAME: &str = "ll_matmul_jit";
 
 pub fn generate_random_matrix(rows: usize, cols: usize, seed: u64) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(seed);

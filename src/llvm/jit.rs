@@ -1,12 +1,12 @@
 use core::panic;
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::env;
 use std::ffi::CStr;
 use std::fs;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::common::DEFAULT_IR_TEMPLATE;
-use crate::common::TEMPLATE_ENV;
+use crate::common::{DEFAULT_FUNCTION_NAME, TEMPLATE_ENV};
+use crate::common::{DEFAULT_IR_TEMPLATE, TEMPLATE_ENV_FUNCTION_NAME};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -18,12 +18,73 @@ use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, RelocMode, Target, TargetMachine};
-use std::collections::hash_map::Entry;
 
 type LlMatmulJitSig = unsafe extern "C" fn(*const f32, *const f32, *mut f32);
+type ShapeKey = (usize, usize, usize);
 
-thread_local! {
-    static JIT_FUNCTIONS: RefCell<HashMap<(usize, usize, usize), JitFunction<'static,LlMatmulJitSig>>> = RefCell::new(HashMap::new());
+static JIT_CACHE: OnceLock<JitCache> = OnceLock::new();
+
+struct JitEntry {
+    context: &'static Context,
+    execution_engine: inkwell::execution_engine::ExecutionEngine<'static>,
+    func: JitFunction<'static, LlMatmulJitSig>,
+}
+
+// Context and ExecutionEngine are not modifid after creation.
+// every JitEntry has its own Context and ExecutionEngine, so there is no risk of data race.
+unsafe impl Send for JitEntry {}
+unsafe impl Sync for JitEntry {}
+
+struct JitCache {
+    map: Mutex<HashMap<ShapeKey, Arc<JitEntry>>>,
+}
+
+#[derive(Debug)]
+enum JitError {
+    CompilationFailed(String),
+}
+
+impl JitCache {
+    fn new() -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get_or_compile(
+        &self,
+        shape: ShapeKey,
+        ir_template: Option<&str>,
+    ) -> Result<Arc<JitEntry>, JitError> {
+        // First check with read lock (if we had RwLock, but Mutex is fine for now)
+        // Optimization: check if exists before compiling
+        {
+            let map = self.map.lock().unwrap();
+            if let Some(e) = map.get(&shape).cloned() {
+                return Ok(e);
+            }
+        }
+
+        // compile, create a Box<Context>, create module with that context,
+        // create execution_engine, get function, wrap in Arc<JitEntry>
+        let entry = unsafe {
+            compile_matmul_jit_with_template(shape.0, shape.1, shape.2, ir_template)
+                .map_err(|e| JitError::CompilationFailed(e))?
+        };
+
+        let entry = Arc::new(entry);
+
+        let mut map = self.map.lock().unwrap();
+
+        // in case another thread compiled it already while we were jit-compiling
+        match map.entry(shape) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                e.insert(entry.clone());
+                Ok(entry)
+            }
+        }
+    }
 }
 
 // template to be udated at runtime
@@ -47,26 +108,14 @@ pub unsafe fn ll_matmul_jit_with_template(
     let n = b_shape.1;
     let k = a_shape.1; // or b_shape.0
 
-    let shape_key = (m, n, k);
+    let shape_key: ShapeKey = (m, n, k);
 
-    // FIXME: can we avoid the cloning in here ?
-    let ll_matmul_jit = JIT_FUNCTIONS.with(|cell| {
-        let mut map = cell.borrow_mut();
-        match map.entry(shape_key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                // We compile and insert into the cache
-                let compiled_func = unsafe {
-                    match compile_matmul_jit_with_template(m, n, k, ir_template) {
-                        Some(func) => func,
-                        None => panic!("JIT Compilation failed"),
-                    }
-                };
-                entry.insert(compiled_func.clone());
-                compiled_func
-            }
-        }
-    });
+    let cache = JIT_CACHE.get_or_init(JitCache::new);
+    let entry = cache
+        .get_or_compile(shape_key, ir_template)
+        .unwrap_or_else(|e| match e {
+            JitError::CompilationFailed(msg) => panic!("JIT Compilation failed: {}", msg),
+        });
 
     let a_col_major = row_major_to_col_major(a, a_shape.0, a_shape.1);
     let b_col_major = row_major_to_col_major(b, b_shape.0, b_shape.1);
@@ -74,7 +123,7 @@ pub unsafe fn ll_matmul_jit_with_template(
 
     unsafe {
         //println!("calling ll_matmul_jit");
-        ll_matmul_jit.call(
+        entry.func.call(
             a_col_major.as_ptr(),
             b_col_major.as_ptr(),
             result.as_mut_ptr(),
@@ -89,7 +138,7 @@ unsafe fn compile_matmul_jit_with_template(
     n: usize,
     k: usize,
     ir_template: Option<&str>,
-) -> Option<JitFunction<'static, LlMatmulJitSig>> {
+) -> Result<JitEntry, String> {
     //println!("compiling matmul_jit for m={}, n={}, k={}", m, n, k);
 
     let template_content = if let Some(t) = ir_template {
@@ -136,8 +185,7 @@ unsafe fn compile_matmul_jit_with_template(
     let module: Module<'static> = match context.create_module_from_ir(buffer) {
         Ok(module) => module,
         Err(e) => {
-            eprintln!("Failed to parse LLVM IR: {}", e);
-            return None;
+            return Err(format!("Failed to parse LLVM IR: {}", e));
         }
     };
 
@@ -152,11 +200,13 @@ unsafe fn compile_matmul_jit_with_template(
     let triple = TargetMachine::get_default_triple();
     let target = match Target::from_triple(&triple) {
         Ok(target) => target,
-        Err(e) => panic!(
-            "{} {}",
-            format!("target from triplet failed : {}", triple),
-            e
-        ),
+        Err(e) => {
+            return Err(format!(
+                "{} {}",
+                format!("target from triplet failed : {}", triple),
+                e
+            ));
+        }
     };
     let machine = match target.create_target_machine(
         &triple,
@@ -169,14 +219,14 @@ unsafe fn compile_matmul_jit_with_template(
         CodeModel::JITDefault,
     ) {
         Some(tm) => tm,
-        None => panic!("couldn't create target machine"),
+        None => return Err("couldn't create target machine".to_string()),
     };
 
     let pass_options = PassBuilderOptions::create();
     // TODO : this pass fails set to true
     // needs FIXME ?
     pass_options.set_verify_each(false);
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(all(debug_assertions, not(test)))]
     pass_options.set_debug_logging(true);
 
     // https://llvm.org/docs/NewPassManager.html#invoking-opt
@@ -208,10 +258,13 @@ unsafe fn compile_matmul_jit_with_template(
             let message = LLVMGetErrorMessage(error);
             if !message.is_null() {
                 let message_str = CStr::from_ptr(message).to_string_lossy().into_owned();
-                println!("The error message: {}", message_str);
                 LLVMDisposeMessage(message);
+                return Err(format!(
+                    "shit happend can't recover any diag! good luck: {}",
+                    message_str
+                ));
             } else {
-                panic!("shit happend can't recover any diag! good luck");
+                return Err("shit happend can't recover any diag! good luck".to_string());
             }
         }
     };
@@ -221,23 +274,30 @@ unsafe fn compile_matmul_jit_with_template(
     let execution_engine = match module.create_jit_execution_engine(OptimizationLevel::Aggressive) {
         Ok(execution_engine) => execution_engine,
         Err(e) => {
-            eprintln!("Failed to create JIT execution engine: {}", e);
-            return None;
+            return Err(format!("Failed to create JIT execution engine: {}", e));
         }
     };
     //println!("execution_engine created");
 
     let ll_matmul_jit: JitFunction<LlMatmulJitSig> = unsafe {
-        match execution_engine.get_function("ll_matmul_jit") {
+        let function_name =
+            env::var(TEMPLATE_ENV_FUNCTION_NAME).unwrap_or(DEFAULT_FUNCTION_NAME.to_string());
+        match execution_engine.get_function(function_name.as_str()) {
             Ok(ll_matmul_jit) => ll_matmul_jit,
             Err(e) => {
-                eprintln!("Failed to find JIT function: {}", e);
-                return None;
+                return Err(format!(
+                    "Failed to find JIT function {} : {}",
+                    function_name, e
+                ));
             }
         }
     };
     //println!("ll_matmul_jit found");
-    Some(ll_matmul_jit)
+    Ok(JitEntry {
+        context: context,
+        execution_engine: execution_engine,
+        func: ll_matmul_jit,
+    })
 }
 
 /// Converts a matrix from row-major to column-major order.
@@ -274,4 +334,45 @@ pub(crate) fn col_major_to_row_major(src: &[f32], m: usize, n: usize) -> Vec<f32
         }
     }
     dst
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jit_caching() {
+        let cache = JIT_CACHE.get_or_init(JitCache::new);
+
+        let shape1: ShapeKey = (2, 2, 2);
+        let shape2: ShapeKey = (3, 3, 3);
+
+        let entry1_a = cache
+            .get_or_compile(shape1, None)
+            .expect("Failed to compile shape1");
+
+        let entry1_b = cache
+            .get_or_compile(shape1, None)
+            .expect("Failed to compile shape1 again");
+        assert!(
+            Arc::ptr_eq(&entry1_a, &entry1_b),
+            "Cache should return the same Arc for the same shape"
+        );
+
+        let entry2 = cache
+            .get_or_compile(shape2, None)
+            .expect("Failed to compile shape2");
+        assert!(
+            !Arc::ptr_eq(&entry1_a, &entry2),
+            "Cache should return different Arcs for different shapes"
+        );
+
+        let entry1_c = cache
+            .get_or_compile(shape1, None)
+            .expect("Failed to retrieve shape1");
+        assert!(
+            Arc::ptr_eq(&entry1_a, &entry1_c),
+            "Original entry should still be in cache"
+        );
+    }
 }

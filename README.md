@@ -37,6 +37,14 @@ LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo run
 cargo run
 ```
 
+### Customizing Function Name
+
+You can also specify the function name used in the LLVM IR template by setting the `LL_MATMUL_TEMPLATE_FUNCTION_NAME` environment variable. This allows you to benchmark compiled vs JITed code using the same function name.
+
+```bash
+LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl LL_MATMUL_TEMPLATE_FUNCTION_NAME=ll_matmul_jit cargo run
+```
+
 ### Running Tests
 
 ```bash
