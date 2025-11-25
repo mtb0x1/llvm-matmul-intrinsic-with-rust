@@ -36,21 +36,36 @@ jobs:
 
       - name: Build
         run: cargo build --verbose
+
       - name: Test
         run: |
           cargo test --verbose
+      - name: Test (JIT Template Unrolled)
+        run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo test --verbose
+
       - name: Run
         run: |
           cargo run --release
+      - name: Run (JIT Template Unrolled)
+        run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo run --release
+
       - name: Bench (4x4)
         run: |
           cargo bench --bench matmul_4x4_bench
+      - name: Bench (4x4 JIT Template Unrolled)
+        run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_4x4_bench
+
       - name: Bench (Large)
         run: |
           cargo bench --bench matmul_bench -- matmul_small_32x32
+          #cargo bench --bench matmul_bench -- matmul_mid_512x512
+          #cargo bench --bench matmul_bench -- matmul_big_1024x1024
+
+      - name: Bench (Large JIT Template Unrolled)
+        run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_bench -- matmul_small_32x32
           #cargo bench --bench matmul_bench -- matmul_mid_512x512
           #cargo bench --bench matmul_bench -- matmul_big_1024x1024
