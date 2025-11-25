@@ -30,7 +30,7 @@ cargo test
 ```console
 4x4 :
     ll_matmul_4x4_unrolled                        time:   [35.781 ns 37.247 ns 38.872 ns]
-    ll_matmul_4x4_using_transpose                 time:   [36.268 ns 37.623 ns 38.972 ns]
+    ll_matmul_4x4                                 time:   [36.268 ns 37.623 ns 38.972 ns]
     faer_matmul                                   time:   [109.13 ns 110.42 ns 112.16 ns]
     matrixmultiply_sgemm                          time:   [132.35 ns 132.98 ns 133.70 ns]
     ndarray_dot                                   time:   [149.48 ns 151.14 ns 152.70 ns]

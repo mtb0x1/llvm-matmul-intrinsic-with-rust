@@ -52,8 +52,10 @@ pub unsafe fn ll_matmul_jit_with_template(
             Entry::Vacant(entry) => {
                 // We compile and insert into the cache
                 let compiled_func = unsafe {
-                    compile_matmul_jit_with_template(m, n, k, ir_template)
-                        .expect("JIT Compilation failed")
+                    match compile_matmul_jit_with_template(m, n, k, ir_template) {
+                        Some(func) => func,
+                        None => panic!("JIT Compilation failed"),
+                    }
                 };
                 entry.insert(compiled_func.clone());
                 compiled_func
@@ -121,9 +123,13 @@ unsafe fn compile_matmul_jit_with_template(
     let context = Box::leak(Box::new(Context::create()));
 
     let buffer = MemoryBuffer::create_from_memory_range_copy(ir_runtime.as_bytes(), "matmul_ir");
-    let module: Module<'static> = context
-        .create_module_from_ir(buffer)
-        .expect("Failed to parse LLVM IR");
+    let module: Module<'static> = match context.create_module_from_ir(buffer) {
+        Ok(module) => module,
+        Err(e) => {
+            eprintln!("Failed to parse LLVM IR: {}", e);
+            return None;
+        }
+    };
 
     // lowering so we can jit,
     // cause we use too high level matrix intrinsics
@@ -202,16 +208,23 @@ unsafe fn compile_matmul_jit_with_template(
 
     //println!("IR lowered:\n{}", module.print_to_string());
 
-    let execution_engine = module
-        .create_jit_execution_engine(OptimizationLevel::Aggressive)
-        .expect("Failed to create JIT execution engine");
-
+    let execution_engine = match module.create_jit_execution_engine(OptimizationLevel::Aggressive) {
+        Ok(execution_engine) => execution_engine,
+        Err(e) => {
+            eprintln!("Failed to create JIT execution engine: {}", e);
+            return None;
+        }
+    };
     //println!("execution_engine created");
 
     let ll_matmul_jit: JitFunction<LlMatmulJitSig> = unsafe {
-        execution_engine
-            .get_function("ll_matmul_jit")
-            .expect("Failed to find JIT function")
+        match execution_engine.get_function("ll_matmul_jit") {
+            Ok(ll_matmul_jit) => ll_matmul_jit,
+            Err(e) => {
+                eprintln!("Failed to find JIT function: {}", e);
+                return None;
+            }
+        }
     };
     //println!("ll_matmul_jit found");
     Some(ll_matmul_jit)

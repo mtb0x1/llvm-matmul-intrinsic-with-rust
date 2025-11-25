@@ -23,16 +23,15 @@ fn bench_matmul_small(c: &mut Criterion) {
     let b_faer = Mat::from_fn(k, n, |i, j| b_vec[i * n + j]);
 
     let mut group = c.benchmark_group("matmul_small_32x32");
+    let mut result = black_box(vec![0.0f32; m * n]);
 
     group.bench_function("ndarray_dot", |bencher| {
         bencher.iter(|| {
-            let c_ndarray = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
-            black_box(c_ndarray)
+            let _ = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
         })
     });
 
     group.bench_function("matrixmultiply_sgemm", |bencher| {
-        let mut c = black_box(vec![0.0f32; m * n]);
         bencher.iter(|| {
             unsafe {
                 black_box(sgemm(
@@ -47,25 +46,23 @@ fn bench_matmul_small(c: &mut Criterion) {
                     n as isize,
                     1,
                     0.0,
-                    c.as_mut_ptr(),
+                    black_box(result.as_mut_ptr()),
                     n as isize,
                     1,
                 ))
             };
-            black_box(c.clone())
         })
     });
 
     group.bench_function("faer_matmul", |bencher| {
         bencher.iter(|| {
-            let c_faer = black_box(black_box(&a_faer) * black_box(&b_faer));
-            black_box(c_faer)
+            let _ = black_box(black_box(&a_faer) * black_box(&b_faer));
         })
     });
 
     group.bench_function("ll_matmul_jit_with_template", |bencher| {
         bencher.iter(|| {
-            let result = unsafe {
+            let _ = unsafe {
                 black_box(ll_matmul_jit_with_template(
                     black_box(&a_vec),
                     (m, k),
@@ -74,7 +71,6 @@ fn bench_matmul_small(c: &mut Criterion) {
                     None,
                 ))
             };
-            black_box(result)
         })
     });
 
@@ -106,13 +102,11 @@ fn bench_matmul_mid(c: &mut Criterion) {
 
     group.bench_function("ndarray_dot", |bencher| {
         bencher.iter(|| {
-            let c_ndarray = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
-            black_box(c_ndarray)
+            let _ = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
         })
     });
-
+    let mut result = black_box(vec![0.0f32; m * n]);
     group.bench_function("matrixmultiply_sgemm", |bencher| {
-        let mut c = black_box(vec![0.0f32; m * n]);
         bencher.iter(|| {
             unsafe {
                 black_box(sgemm(
@@ -127,19 +121,17 @@ fn bench_matmul_mid(c: &mut Criterion) {
                     n as isize,
                     1,
                     0.0,
-                    c.as_mut_ptr(),
+                    black_box(result.as_mut_ptr()),
                     n as isize,
                     1,
                 ))
             };
-            black_box(c.clone())
         })
     });
 
     group.bench_function("faer_matmul", |bencher| {
         bencher.iter(|| {
-            let c_faer = black_box(black_box(&a_faer) * black_box(&b_faer));
-            black_box(c_faer)
+            let _ = black_box(black_box(&a_faer) * black_box(&b_faer));
         })
     });
 
@@ -173,16 +165,14 @@ fn bench_matmul_big(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("matmul_big_1024x1024");
     group.sample_size(10);
-
+    let mut result = black_box(vec![0.0f32; m * n]);
     group.bench_function("ndarray_dot", |bencher| {
         bencher.iter(|| {
-            let c_ndarray = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
-            black_box(c_ndarray)
+            let _ = black_box(black_box(&a_ndarray).dot(black_box(&b_ndarray)));
         })
     });
 
     group.bench_function("matrixmultiply_sgemm", |bencher| {
-        let mut c = black_box(vec![0.0f32; m * n]);
         bencher.iter(|| {
             unsafe {
                 black_box(sgemm(
@@ -197,19 +187,17 @@ fn bench_matmul_big(c: &mut Criterion) {
                     n as isize,
                     1,
                     0.0,
-                    c.as_mut_ptr(),
+                    black_box(result.as_mut_ptr()),
                     n as isize,
                     1,
                 ))
             };
-            black_box(c.clone())
         })
     });
 
     group.bench_function("faer_matmul", |bencher| {
         bencher.iter(|| {
-            let c_faer = black_box(black_box(&a_faer) * black_box(&b_faer));
-            black_box(c_faer)
+            let _ = black_box(black_box(&a_faer) * black_box(&b_faer));
         })
     });
 

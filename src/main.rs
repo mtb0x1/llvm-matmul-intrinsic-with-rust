@@ -2,16 +2,8 @@ mod llvm;
 use llvm::ll_matmul_jit_with_template;
 
 use llvm_matmul_intrinsic_with_rust::common::native_matmul;
-
-// pointers are valid and aligned ?
-// a and b are 4x4 matrices
-// check llvm/matmul_4x4.ll for the implementation.
-unsafe extern "C" {
-    #[link_name = "ll_matmul_4x4_using_transpose"]
-    unsafe fn ll_matmul_4x4_using_transpose(a: *const f32, b: *const f32, result: *mut f32);
-    #[link_name = "ll_matmul_4x4_unrolled"]
-    unsafe fn ll_matmul_4x4_unrolled(a: *const f32, b: *const f32, result: *mut f32);
-}
+use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4;
+use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4_unrolled;
 
 fn main() {
     // 2x3 * 3x4 = (2x4)
@@ -23,9 +15,6 @@ fn main() {
 
     let result = unsafe { ll_matmul_jit_with_template(&a, a_shape, &b, b_shape, None) };
     println!("LLVM JIT WITH TEMPLATE (2x3 * 3x2)      : {:?}", result);
-
-    // let result = unsafe { ll_matmul_builtin(&a, a_shape, &b, b_shape) };
-    // println!("LLVM BUILTIN\t(2x3 * 3x2)      : {:?}", result);
 
     let result = native_matmul(&a, a_shape, &b, b_shape);
     println!("Native GENERIC         (2x3 * 3x2)      : {:?}", result);
@@ -47,6 +36,6 @@ fn main() {
 
     let mut result = [0.0f32; 16];
     assert!(result.iter().all(|f| *f == 0.0f32));
-    unsafe { ll_matmul_4x4_using_transpose(a.as_ptr(), b.as_ptr(), result.as_mut_ptr()) };
+    unsafe { ll_matmul_4x4(a.as_ptr(), b.as_ptr(), result.as_mut_ptr()) };
     println!("LLVM transpose 4x4                      : {:?}", result);
 }

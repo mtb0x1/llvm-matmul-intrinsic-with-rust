@@ -1,7 +1,6 @@
 use llvm_matmul_intrinsic_with_rust::common::assert_vec_eq;
+use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_4x4;
 use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_4x4_unrolled;
-use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_4x4_using_transpose;
-use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_builtin;
 use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_jit_with_template;
 use ndarray::Array2;
 
@@ -128,35 +127,35 @@ fn test_ll_matmul_4x4_unrolled_empty_array() {
     test_4x4_empty(ll_matmul_4x4_unrolled);
 }
 
-// Tests for ll_matmul_4x4_using_transpose
+// Tests for ll_matmul_4x4
 #[test]
-fn test_ll_matmul_4x4_using_transpose_vs_ndarray() {
-    test_4x4_vs_ndarray(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_vs_ndarray() {
+    test_4x4_vs_ndarray(ll_matmul_4x4);
 }
 
 #[test]
-fn test_ll_matmul_4x4_using_transpose_identity_matrix() {
-    test_4x4_identity(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_identity_matrix() {
+    test_4x4_identity(ll_matmul_4x4);
 }
 
 #[test]
-fn test_ll_matmul_4x4_using_transpose_zero_matrix() {
-    test_4x4_zero(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_zero_matrix() {
+    test_4x4_zero(ll_matmul_4x4);
 }
 
 #[test]
-fn test_ll_matmul_4x4_using_transpose_negative_values() {
-    test_4x4_negatives(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_negative_values() {
+    test_4x4_negatives(ll_matmul_4x4);
 }
 
 #[test]
-fn test_ll_matmul_4x4_using_transpose_small_values_precision() {
-    test_4x4_precision(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_small_values_precision() {
+    test_4x4_precision(ll_matmul_4x4);
 }
 
 #[test]
-fn test_ll_matmul_4x4_using_transpose_empty_array() {
-    test_4x4_empty(ll_matmul_4x4_using_transpose);
+fn test_ll_matmul_4x4_empty_array() {
+    test_4x4_empty(ll_matmul_4x4);
 }
 
 // cross val between both 4x4 implementations
@@ -174,7 +173,7 @@ fn test_4x4_unrolled_vs_transpose_consistency() {
 
     unsafe {
         ll_matmul_4x4_unrolled(a.as_ptr(), b.as_ptr(), result_unrolled.as_mut_ptr());
-        ll_matmul_4x4_using_transpose(a.as_ptr(), b.as_ptr(), result_transpose.as_mut_ptr());
+        ll_matmul_4x4(a.as_ptr(), b.as_ptr(), result_transpose.as_mut_ptr());
     };
 
     assert_vec_eq(&result_unrolled, &result_transpose, 1e-4);
@@ -377,53 +376,4 @@ fn test_ll_matmul_jit_with_template_empty_array() {
     let a: [f32; 0] = [];
     let b: [f32; 0] = [];
     let _result = unsafe { ll_matmul_jit_with_template(&a, (0, 0), &b, (0, 0), None) };
-}
-
-// Tests for ll_matmul_builtin (not implemented)
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_empty_array() {
-    let a: [f32; 0] = [];
-    let b: [f32; 0] = [];
-    let _result = unsafe { ll_matmul_builtin(&a, (0, 0), &b, (0, 0)) };
-}
-
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_1x1_matrix() {
-    let a = [5.0];
-    let b = [3.0];
-    let _result = unsafe { ll_matmul_builtin(&a, (1, 1), &b, (1, 1)) };
-}
-
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_identity_matrix() {
-    let a = [1., 2., 3., 4.];
-    let identity = [1., 0., 0., 1.];
-    let _result = unsafe { ll_matmul_builtin(&a, (2, 2), &identity, (2, 2)) };
-}
-
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_zero_matrix() {
-    let a = [1., 2., 3., 4., 5., 6.];
-    let b = [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.];
-    let _result = unsafe { ll_matmul_builtin(&a, (2, 3), &b, (3, 4)) };
-}
-
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_negative_values() {
-    let a = [1., -2., 3., -4., 5., -6.];
-    let b = [-1., 2., -3., 4., -5., 6., -7., 8., -9., 10., -11., 12.];
-    let _result = unsafe { ll_matmul_builtin(&a, (2, 3), &b, (3, 4)) };
-}
-
-#[test]
-#[should_panic(expected = "ll_matmul_builtin not implemented")]
-fn test_ll_matmul_builtin_invalid_dimensions() {
-    let a = [1., 2., 3., 4., 5., 6.];
-    let b = [1., 2., 3., 4., 5., 6.];
-    let _result = unsafe { ll_matmul_builtin(&a, (2, 3), &b, (2, 3)) };
 }

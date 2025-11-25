@@ -20,3 +20,17 @@ harness = false
 [[bench]]
 name = "matmul_bench"
 harness = false
+
+
+# FIXME : cause jit memory corruption
+#[profile.release]
+#opt-level = 3
+#debug = false
+#strip = "debuginfo"
+#debug-assertions = false
+#overflow-checks = false
+#lto = true
+#panic = 'unwind'
+#incremental = false
+#codegen-units = 16
+#rpath = false
