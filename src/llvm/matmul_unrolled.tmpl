@@ -1,0 +1,86 @@
+define void @ll_matmul_jit(float* %a, float* %b, float* %result) {
+entry:
+  br label %loop.j.head
+
+loop.j.head:
+  %j = phi i32 [ 0, %entry ], [ %j.next, %loop.j.exit ]
+  %j.cond = icmp slt i32 %j, {N}
+  br i1 %j.cond, label %loop.j.body, label %exit
+
+loop.j.body:
+  %j.ext = zext i32 %j to i64
+  %c.stride.offset = mul i64 %j.ext, {C_STRIDE}
+  %b.stride.offset = mul i64 %j.ext, {B_STRIDE}
+
+  ; int C column j to 0.0
+  br label %init.c.head
+
+init.c.head:
+  %i.init = phi i32 [ 0, %loop.j.body ], [ %i.init.next, %init.c.body ]
+  %i.init.cond = icmp slt i32 %i.init, {M}
+  br i1 %i.init.cond, label %init.c.body, label %loop.k.head
+
+init.c.body:
+  %i.init.ext = zext i32 %i.init to i64
+  %c.init.idx = add i64 %c.stride.offset, %i.init.ext
+  %c.init.ptr = getelementptr float, float* %result, i64 %c.init.idx
+  store float 0.0, float* %c.init.ptr, align 4
+
+  %i.init.next = add i32 %i.init, 1
+  br label %init.c.head
+
+loop.k.head:
+  %k = phi i32 [ 0, %init.c.head ], [ %k.next, %loop.k.exit ]
+  %k.cond = icmp slt i32 %k, {K}
+  br i1 %k.cond, label %loop.k.body, label %loop.j.exit
+
+loop.k.body:
+  %k.ext = zext i32 %k to i64
+
+  ; load B[k, j]
+  %b.idx = add i64 %b.stride.offset, %k.ext
+  %b.ptr = getelementptr float, float* %b, i64 %b.idx
+  %b.val = load float, float* %b.ptr, align 4
+
+  ; precompute A stride offset for this k
+  %a.stride.offset = mul i64 %k.ext, {A_STRIDE}
+
+  br label %loop.i.head
+
+loop.i.head:
+  %i = phi i32 [ 0, %loop.k.body ], [ %i.next, %loop.i.body ]
+  %i.cond = icmp slt i32 %i, {M}
+  br i1 %i.cond, label %loop.i.body, label %loop.k.exit
+
+loop.i.body:
+  %i.ext = zext i32 %i to i64
+
+  ; load A[i, k]
+  %a.idx = add i64 %a.stride.offset, %i.ext
+  %a.ptr = getelementptr float, float* %a, i64 %a.idx
+  %a.val = load float, float* %a.ptr, align 4
+
+  ; load C[i, j]
+  %c.idx = add i64 %c.stride.offset, %i.ext
+  %c.ptr = getelementptr float, float* %result, i64 %c.idx
+  %c.val = load float, float* %c.ptr, align 4
+
+  ; compute
+  %prod = fmul float %a.val, %b.val
+  %res = fadd float %c.val, %prod
+  store float %res, float* %c.ptr, align 4
+
+  %i.next = add i32 %i, 1
+  br label %loop.i.head
+
+loop.k.exit:
+  %k.next = add i32 %k, 1
+  br label %loop.k.head
+
+loop.j.exit:
+  %j.next = add i32 %j, 1
+  br label %loop.j.head
+
+exit:
+  ret void
+}

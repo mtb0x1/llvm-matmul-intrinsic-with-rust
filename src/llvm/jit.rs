@@ -1,7 +1,12 @@
 use core::panic;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::env;
 use std::ffi::CStr;
+use std::fs;
+
+use crate::common::DEFAULT_IR_TEMPLATE;
+use crate::common::TEMPLATE_ENV;
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -79,8 +84,6 @@ pub unsafe fn ll_matmul_jit_with_template(
     col_major_to_row_major(&result, m, n)
 }
 
-const DEFAULT_IR_TEMPLATE: &str = include_str!("matmul_intrinsic_naive.tmpl");
-
 unsafe fn compile_matmul_jit_with_template(
     m: usize,
     n: usize,
@@ -89,10 +92,15 @@ unsafe fn compile_matmul_jit_with_template(
 ) -> Option<JitFunction<'static, LlMatmulJitSig>> {
     //println!("compiling matmul_jit for m={}, n={}, k={}", m, n, k);
 
-    let ir_runtime = ir_template
-        .unwrap_or_else(|| {
-            eprintln!(
-                r#" 
+    let template_content = if let Some(t) = ir_template {
+        t.to_string()
+    } else if let Ok(path) = env::var(TEMPLATE_ENV) {
+        fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("Failed to read template from {}: {}", path, e);
+        })
+    } else {
+        eprintln!(
+            r#" 
 // You are using `DEFAULT_IR_TEMPLATE` (naive)
 // with size of ({m}x{n} * {k}x{n})
 // when targeting non specilized hardware (CPU),
@@ -103,9 +111,11 @@ unsafe fn compile_matmul_jit_with_template(
 // up to you to check which value is best for you
 // you can play with examples/debug_large_matmul.rs to check which value is best for you
 "#
-            );
-            DEFAULT_IR_TEMPLATE
-        })
+        );
+        DEFAULT_IR_TEMPLATE.to_string()
+    };
+
+    let ir_runtime = template_content
         .replace("{M}", &m.to_string())
         .replace("{N}", &n.to_string())
         .replace("{K}", &k.to_string())

@@ -1,9 +1,7 @@
-mod llvm;
-use llvm::ll_matmul_jit_with_template;
-
 use llvm_matmul_intrinsic_with_rust::common::native_matmul;
 use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4;
 use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4_unrolled;
+use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_jit_with_template;
 
 fn main() {
     // 2x3 * 3x4 = (2x4)

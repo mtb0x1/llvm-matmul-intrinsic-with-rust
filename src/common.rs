@@ -2,6 +2,9 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
+pub const TEMPLATE_ENV: &str = "LL_MATMUL_TEMPLATE";
+pub const DEFAULT_IR_TEMPLATE: &str = include_str!("llvm/matmul_intrinsic_naive.tmpl");
+
 pub fn generate_random_matrix(rows: usize, cols: usize, seed: u64) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..rows * cols)
