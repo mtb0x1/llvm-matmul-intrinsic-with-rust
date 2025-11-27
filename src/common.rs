@@ -2,10 +2,22 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-pub const TEMPLATE_ENV: &str = "LL_MATMUL_TEMPLATE";
-pub const TEMPLATE_ENV_FUNCTION_NAME: &str = "LL_MATMUL_TEMPLATE_FUNCTION_NAME";
-pub const DEFAULT_IR_TEMPLATE: &str = include_str!("llvm/matmul_intrinsic_naive.tmpl");
-pub const DEFAULT_FUNCTION_NAME: &str = "ll_matmul_jit";
+pub const DEFAULT_IR_4X4_CPU: &str = include_str!("llvm/matmul_4x4.ll");
+pub const TEMPLATE_JIT_CPU_ENV: &str = "LL_MATMUL_TEMPLATE";
+pub const TEMPLATE_JIT_CPU_ENV_FUNCTION_NAME: &str = "LL_MATMUL_TEMPLATE_FUNCTION_NAME";
+pub const DEFAULT_IR_TEMPLATE_JIT_CPU: &str = include_str!("llvm/matmul_intrinsic_naive.tmpl");
+pub const DEFAULT_FUNCTION_NAME_JIT_CPU: &str = "ll_matmul_cpu_jit";
+pub const DEFAULT_IR_TEMPLATE_GPU: &str = include_str!("llvm/gpu/matmul_for_gpu.ll");
+pub const DEFAULT_FUNCTION_NAME_GPU: &str = "ll_matmul_gpu";
+#[cfg(feature = "gpu")]
+pub static GPU_FATBIN_PAYLOAD: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/matmul_for_gpu.fatbin"));
+#[cfg(feature = "gpu")]
+const _: () = assert!(GPU_FATBIN_PAYLOAD.len() > 0);
+#[cfg(feature = "gpu")]
+pub static GPU_PTX_PAYLOAD: &str = include_str!(concat!(env!("OUT_DIR"), "/matmul_for_gpu.ptx"));
+#[cfg(feature = "gpu")]
+const _: () = assert!(GPU_PTX_PAYLOAD.len() > 0);
 
 pub fn generate_random_matrix(rows: usize, cols: usize, seed: u64) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(seed);

@@ -1,11 +1,18 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
-use llvm_matmul_intrinsic_with_rust::{
-    common::generate_random_matrix, ll_matmul_jit_with_template,
+use llvm_intrinsic_with_rust::{
+    col_major_to_row_major, common::generate_random_matrix, compile_matmul_jit_with_template,
+    row_major_to_col_major,
 };
 use matrixmultiply::sgemm;
 use ndarray::Array2;
 use std::hint::black_box;
+
+#[cfg(feature = "gpu")]
+use llvm_intrinsic_with_rust::ll_matmul_gpu_compiled;
+#[cfg(feature = "gpu")]
+use llvm_intrinsic_with_rust::ll_matmul_gpu_jit;
+
 const SEED: u64 = 42;
 
 fn bench_matmul_small(c: &mut Criterion) {
@@ -61,27 +68,54 @@ fn bench_matmul_small(c: &mut Criterion) {
     });
 
     group.bench_function("ll_matmul_jit_with_template", |bencher| {
+        let ll_matmul_jit_with_template_entry =
+            match unsafe { compile_matmul_jit_with_template(m, n, k, None) } {
+                Ok(func) => func,
+                Err(e) => panic!("Failed to compile JIT function: {}", e),
+            };
+        let a_col_major = row_major_to_col_major(&a_vec, m, k);
+        let b_col_major = row_major_to_col_major(&b_vec, k, n);
+        let mut result = vec![0.0; m * n];
         bencher.iter(|| {
             let _ = unsafe {
-                black_box(ll_matmul_jit_with_template(
-                    black_box(&a_vec),
-                    (m, k),
-                    black_box(&b_vec),
-                    (k, n),
-                    None,
+                black_box(ll_matmul_jit_with_template_entry.func.call(
+                    black_box(a_col_major.as_ptr()),
+                    black_box(b_col_major.as_ptr()),
+                    black_box(result.as_mut_ptr()),
                 ))
             };
         })
     });
 
-    // group.bench_function("ll_matmul_builtin", |bencher| {
-    //     bencher.iter(|| {
-    //         let result =
-    //             unsafe { ll_matmul_builtin(black_box(&a_vec), (m, k), black_box(&b_vec), (k, n)) };
-    //         black_box(result)
-    //     })
-    // });
-    // group.finish();
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_jit", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_jit(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
+
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_compiled", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_compiled(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
+
+    group.finish();
 }
 
 fn bench_matmul_mid(c: &mut Criterion) {
@@ -135,18 +169,35 @@ fn bench_matmul_mid(c: &mut Criterion) {
         })
     });
 
-    //  no jit
-    //  TODO : create a not so naive template that
-    //  can be used with jit without oom on opt phase
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_jit", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_jit(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
 
-    // group.bench_function("ll_matmul_builtin", |bencher| {
-    //     bencher.iter(|| {
-    //         let result =
-    //             unsafe { ll_matmul_builtin(black_box(&a_vec), (m, k), black_box(&b_vec), (k, n)) };
-    //         black_box(result)
-    //     })
-    // });
-    // group.finish();
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_compiled", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_compiled(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
+
+    group.finish();
 }
 
 fn bench_matmul_big(c: &mut Criterion) {
@@ -201,18 +252,35 @@ fn bench_matmul_big(c: &mut Criterion) {
         })
     });
 
-    //  no jit
-    //  TODO : create a not so naive template that
-    //  can be used with jit without oom on opt phase
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_jit", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_jit(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
 
-    // group.bench_function("ll_matmul_builtin", |bencher| {
-    //     bencher.iter(|| {
-    //         let result =
-    //             unsafe { ll_matmul_builtin(black_box(&a_vec), (m, k), black_box(&b_vec), (k, n)) };
-    //         black_box(result)
-    //     })
-    // });
-    // group.finish();
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_compiled", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_compiled(
+                    black_box(&a_vec),
+                    (m, k),
+                    black_box(&b_vec),
+                    (k, n),
+                ))
+            };
+        })
+    });
+
+    group.finish();
 }
 
 criterion_group!(

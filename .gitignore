@@ -1,3 +1,5 @@
 /target
 perf.*
 .vscode
+*.nsys-rep
+*.sqlite

@@ -1,7 +1,7 @@
-use llvm_matmul_intrinsic_with_rust::common::assert_vec_eq;
-use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_4x4;
-use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_4x4_unrolled;
-use llvm_matmul_intrinsic_with_rust::llvm::ll_matmul_jit_with_template;
+use llvm_intrinsic_with_rust::common::assert_vec_eq;
+use llvm_intrinsic_with_rust::llvm::ll_matmul_4x4;
+use llvm_intrinsic_with_rust::llvm::ll_matmul_4x4_unrolled;
+use llvm_intrinsic_with_rust::llvm::ll_matmul_jit_with_template;
 use ndarray::Array2;
 
 fn test_4x4_vs_ndarray(matmul_fn: unsafe extern "C" fn(*const f32, *const f32, *mut f32)) {

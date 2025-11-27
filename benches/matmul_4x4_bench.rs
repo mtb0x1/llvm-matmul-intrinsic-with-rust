@@ -1,11 +1,19 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_4x4_unrolled;
-use llvm_matmul_intrinsic_with_rust::ll_matmul_jit_with_template;
+use llvm_intrinsic_with_rust::col_major_to_row_major;
+use llvm_intrinsic_with_rust::compile_matmul_jit_with_template;
+use llvm_intrinsic_with_rust::ll_matmul_4x4;
+use llvm_intrinsic_with_rust::ll_matmul_4x4_unrolled;
+use llvm_intrinsic_with_rust::ll_matmul_jit_with_template;
+use llvm_intrinsic_with_rust::row_major_to_col_major;
 use matrixmultiply::sgemm;
 use ndarray::Array2;
 use std::hint::black_box;
+
+#[cfg(feature = "gpu")]
+use llvm_intrinsic_with_rust::ll_matmul_gpu_compiled;
+#[cfg(feature = "gpu")]
+use llvm_intrinsic_with_rust::ll_matmul_gpu_jit;
 
 fn bench_matmul_4x4(c: &mut Criterion) {
     let a: [f32; 16] = black_box([
@@ -84,26 +92,55 @@ fn bench_matmul_4x4(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("ll_matmul_jit_with_template", |bencher| {
+    group.bench_function("ll_matmul_cpu_jit_with_template", |bencher| {
+        let ll_matmul_jit_with_template_entry =
+            match unsafe { compile_matmul_jit_with_template(4, 4, 4, None) } {
+                Ok(func) => func,
+                Err(e) => panic!("Failed to compile JIT function: {}", e),
+            };
+        let a_col_major = row_major_to_col_major(&a, 4, 4);
+        let b_col_major = row_major_to_col_major(&b, 4, 4);
+        let mut result = vec![0.0; 4 * 4];
         bencher.iter(|| {
             let _ = unsafe {
-                black_box(ll_matmul_jit_with_template(
-                    black_box(&a),
-                    (4, 4),
-                    black_box(&b),
-                    (4, 4),
-                    None,
+                black_box(ll_matmul_jit_with_template_entry.func.call(
+                    black_box(a_col_major.as_ptr()),
+                    black_box(b_col_major.as_ptr()),
+                    black_box(result.as_mut_ptr()),
                 ))
             };
         })
     });
 
-    // group.bench_function("ll_matmul_builtin", |bencher| {
-    //     bencher.iter(|| {
-    //         let result = unsafe { black_box(ll_matmul_builtin(black_box(&a), (4, 4), black_box(&b), (4, 4))) };
-    //         black_box(result)
-    //     })
-    // });
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_jit", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_jit(
+                    black_box(&a),
+                    (4, 4),
+                    black_box(&b),
+                    (4, 4),
+                ))
+            };
+        })
+    });
+
+    #[cfg(feature = "gpu")]
+    group.bench_function("ll_matmul_gpu_compiled", |bencher| {
+        bencher.iter(|| {
+            let _ = unsafe {
+                black_box(ll_matmul_gpu_compiled(
+                    black_box(&a),
+                    (4, 4),
+                    black_box(&b),
+                    (4, 4),
+                ))
+            };
+        })
+    });
+
+    group.finish();
 }
 
 criterion_group!(benches, bench_matmul_4x4);

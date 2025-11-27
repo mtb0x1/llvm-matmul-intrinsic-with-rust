@@ -1,5 +1,5 @@
 [package]
-name = "llvm-matmul-intrinsic-with-rust"
+name = "llvm-intrinsic-with-rust"
 version = "0.1.0"
 edition = "2024"
 
@@ -21,8 +21,11 @@ harness = false
 name = "matmul_bench"
 harness = false
 
+[features]
+gpu = []
 
-# FIXME : cause jit memory corruption
+
+# FIXME : cause cpu jit memory corruption
 #[profile.release]
 #opt-level = 3
 #debug = false

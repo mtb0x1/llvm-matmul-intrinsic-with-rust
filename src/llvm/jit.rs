@@ -5,8 +5,8 @@ use std::ffi::CStr;
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::common::{DEFAULT_FUNCTION_NAME, TEMPLATE_ENV};
-use crate::common::{DEFAULT_IR_TEMPLATE, TEMPLATE_ENV_FUNCTION_NAME};
+use crate::common::{DEFAULT_FUNCTION_NAME_JIT_CPU, TEMPLATE_JIT_CPU_ENV};
+use crate::common::{DEFAULT_IR_TEMPLATE_JIT_CPU, TEMPLATE_JIT_CPU_ENV_FUNCTION_NAME};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -22,20 +22,21 @@ use inkwell::targets::{CodeModel, RelocMode, Target, TargetMachine};
 type LlMatmulJitSig = unsafe extern "C" fn(*const f32, *const f32, *mut f32);
 type ShapeKey = (usize, usize, usize);
 
-static JIT_CACHE: OnceLock<JitCache> = OnceLock::new();
+pub static JIT_CACHE: OnceLock<JitCache> = OnceLock::new();
 
-struct JitEntry {
-    context: &'static Context,
-    execution_engine: inkwell::execution_engine::ExecutionEngine<'static>,
-    func: JitFunction<'static, LlMatmulJitSig>,
+#[allow(dead_code)]
+pub struct JitEntry {
+    // ExecutionEngine and JitFunction hold references to LLVM objects
+    // that must not be dropped. We use Box::leak to convert to 'static references.
+    pub func: JitFunction<'static, LlMatmulJitSig>,
 }
 
-// Context and ExecutionEngine are not modifid after creation.
+// Context and ExecutionEngine are not modified after creation.
 // every JitEntry has its own Context and ExecutionEngine, so there is no risk of data race.
 unsafe impl Send for JitEntry {}
 unsafe impl Sync for JitEntry {}
 
-struct JitCache {
+pub struct JitCache {
     map: Mutex<HashMap<ShapeKey, Arc<JitEntry>>>,
 }
 
@@ -69,7 +70,7 @@ impl JitCache {
         // create execution_engine, get function, wrap in Arc<JitEntry>
         let entry = unsafe {
             compile_matmul_jit_with_template(shape.0, shape.1, shape.2, ir_template)
-                .map_err(|e| JitError::CompilationFailed(e))?
+                .map_err(JitError::CompilationFailed)?
         };
 
         let entry = Arc::new(entry);
@@ -133,7 +134,7 @@ pub unsafe fn ll_matmul_jit_with_template(
     col_major_to_row_major(&result, m, n)
 }
 
-unsafe fn compile_matmul_jit_with_template(
+pub unsafe fn compile_matmul_jit_with_template(
     m: usize,
     n: usize,
     k: usize,
@@ -143,7 +144,7 @@ unsafe fn compile_matmul_jit_with_template(
 
     let template_content = if let Some(t) = ir_template {
         t.to_string()
-    } else if let Ok(path) = env::var(TEMPLATE_ENV) {
+    } else if let Ok(path) = env::var(TEMPLATE_JIT_CPU_ENV) {
         fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!("Failed to read template from {}: {}", path, e);
         })
@@ -161,8 +162,19 @@ unsafe fn compile_matmul_jit_with_template(
 // you can play with examples/debug_large_matmul.rs to check which value is best for you
 "#
         );
-        DEFAULT_IR_TEMPLATE.to_string()
+        DEFAULT_IR_TEMPLATE_JIT_CPU.to_string()
     };
+
+    // Check if the template contains placeholders (it should for JIT instantiation)
+    if !template_content.contains("{M}")
+        && !template_content.contains("{N}")
+        && !template_content.contains("{K}")
+    {
+        return Err(
+            "Template must contain placeholders like {M}, {N}, {K} for matrix dimensions. \
+             If using a hardcoded IR file (like matmul_4x4.ll), do not use it as a template for different sizes.".to_string()
+        );
+    }
 
     let ir_runtime = template_content
         .replace("{M}", &m.to_string())
@@ -177,8 +189,8 @@ unsafe fn compile_matmul_jit_with_template(
 
     //println!("IR instantiated:\n{}", ir_runtime);
 
-    // FIXME: memory to watch for I guess ?
-    // probably a struct where a context (or list of those) lives along side with jit functions cache.
+    // each JIT compilation gets its own context leaked to 'static
+    // this is okay(?) because llvm-ontext needs to live for the entire program
     let context = Box::leak(Box::new(Context::create()));
 
     let buffer = MemoryBuffer::create_from_memory_range_copy(ir_runtime.as_bytes(), "matmul_ir");
@@ -226,8 +238,8 @@ unsafe fn compile_matmul_jit_with_template(
     // TODO : this pass fails set to true
     // needs FIXME ?
     pass_options.set_verify_each(false);
-    #[cfg(all(debug_assertions, not(test)))]
-    pass_options.set_debug_logging(true);
+    //FIXME: should be true in debug mode, but not in test or bench mode
+    pass_options.set_debug_logging(false);
 
     // https://llvm.org/docs/NewPassManager.html#invoking-opt
     // opt --help
@@ -271,17 +283,19 @@ unsafe fn compile_matmul_jit_with_template(
 
     //println!("IR lowered:\n{}", module.print_to_string());
 
-    let execution_engine = match module.create_jit_execution_engine(OptimizationLevel::Aggressive) {
-        Ok(execution_engine) => execution_engine,
-        Err(e) => {
-            return Err(format!("Failed to create JIT execution engine: {}", e));
-        }
-    };
+    let execution_engine = Box::leak(Box::new(
+        match module.create_jit_execution_engine(OptimizationLevel::Aggressive) {
+            Ok(execution_engine) => execution_engine,
+            Err(e) => {
+                return Err(format!("Failed to create JIT execution engine: {}", e));
+            }
+        },
+    ));
     //println!("execution_engine created");
 
     let ll_matmul_jit: JitFunction<LlMatmulJitSig> = unsafe {
-        let function_name =
-            env::var(TEMPLATE_ENV_FUNCTION_NAME).unwrap_or(DEFAULT_FUNCTION_NAME.to_string());
+        let function_name = env::var(TEMPLATE_JIT_CPU_ENV_FUNCTION_NAME)
+            .unwrap_or(DEFAULT_FUNCTION_NAME_JIT_CPU.to_string());
         match execution_engine.get_function(function_name.as_str()) {
             Ok(ll_matmul_jit) => ll_matmul_jit,
             Err(e) => {
@@ -294,8 +308,6 @@ unsafe fn compile_matmul_jit_with_template(
     };
     //println!("ll_matmul_jit found");
     Ok(JitEntry {
-        context: context,
-        execution_engine: execution_engine,
         func: ll_matmul_jit,
     })
 }
@@ -304,7 +316,7 @@ unsafe fn compile_matmul_jit_with_template(
 /// Input: src - flat row-major matrix (m x n)
 /// Output: flat column-major matrix (m x n)
 #[inline(always)]
-pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
+pub fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
     assert!(
         !src.is_empty(),
         "row_major_to_col_major :: `src` can't be empty"
@@ -322,7 +334,7 @@ pub(crate) fn row_major_to_col_major(src: &[f32], m: usize, n: usize) -> Vec<f32
 /// Input: src - flat column-major matrix (m x n)
 /// Output: flat row-major matrix (m x n)
 #[inline(always)]
-pub(crate) fn col_major_to_row_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
+pub fn col_major_to_row_major(src: &[f32], m: usize, n: usize) -> Vec<f32> {
     assert!(
         !src.is_empty(),
         "col_major_to_row_major :: `src` can't be empty"

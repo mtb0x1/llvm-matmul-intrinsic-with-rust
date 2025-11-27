@@ -1,4 +1,4 @@
-define void @ll_matmul_jit(float* %a, float* %b, float* %result) {
+define void @ll_matmul_cpu_jit(float* %a, float* %b, float* %result) {
 entry:
   ; load matrix
   %a_mat = call <{VEC_A_SIZE} x float> @llvm.matrix.column.major.load.v{VEC_A_SIZE}f32.p0f32(float* %a, i64 {A_STRIDE}, i1 false, i32 {M}, i32 {K})

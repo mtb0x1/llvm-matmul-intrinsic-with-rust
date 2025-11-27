@@ -2,7 +2,78 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
+#[cfg(feature = "gpu")]
+fn getsmarch() -> String {
+    let output = Command::new("nvidia-smi")
+        .args(&["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output()
+        .expect("nvidia-smi failed");
+
+    let cap_str = String::from_utf8_lossy(&output.stdout);
+    let cap: Vec<&str> = cap_str.trim().split('.').collect();
+    format!("{}{}", cap[0], cap[1]) //75
+}
+
+#[cfg(feature = "gpu")]
+fn compile_llvm_ir_for_gpu(ll_file: &PathBuf, obj_file: &PathBuf) {
+    println!("cargo:rerun-if-changed=src/llvm/{}", ll_file.display());
+    let bc_file = obj_file.with_extension("bc");
+    let ptx_file = obj_file.with_extension("ptx");
+
+    //compile .ll to .bc
+    let mut llvm_as_command = Command::new("llvm-as");
+    llvm_as_command.arg(ll_file).arg("-o").arg(&bc_file);
+    let status = llvm_as_command
+        .status()
+        .expect("Failed to execute llvm-as. Make sure LLVM llvm-as is installed and in PATH.");
+    if !status.success() {
+        panic!("llvm-as failed to compile LLVM IR file: {:?}", ll_file);
+    }
+
+    // compile .bc to .ptx
+    // llc needs to have the capacity to target NVPTX (check llvm build flags)
+    let mut llc_command = Command::new("llc");
+    //eprintln!("=====> sm_arch is {}", getsmarch());
+    llc_command
+        .arg("-march=nvptx64")
+        .arg(format!("-mcpu=sm_{}", getsmarch()))
+        .arg("-o")
+        .arg(&ptx_file)
+        .arg(&bc_file);
+    let status = llc_command
+        .status()
+        .expect("Failed to execute llc. Make sure LLVM llc is installed and in PATH.");
+    if !status.success() {
+        panic!("llc failed to compile LLVM IR for GPU, file: {:?}", ll_file);
+    }
+
+    // compile .ptx to .bin (fatcubin)
+    // FIXME : --generate-code is not working, this is the way to force SASS (Streaming "mutliprocessor"? ASSembler)
+    // the FATBIN contains SASS for the current GPU, it is loaded directly.
+    // this is the most compiled form possible.
+    // check https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html
+    // for now we can check if the .fatbin have a SASS section.
+    // cuobjdump --dump-sass "target/debug/build/llvm-intrinsic-with-rust-*/out/matmul_for_gpu.fatbin"
+    let mut fatbin = Command::new("nvcc");
+    fatbin
+        //.arg(format!(
+        //     "--generate-code arch={}{},code={}{}",
+        //     "compute_",
+        //     getsmarch(),
+        //     "sm_",
+        //     getsmarch()
+        // ))
+        .arg("--fatbin")
+        .arg(&ptx_file)
+        .arg("-o")
+        .arg(&obj_file);
+    eprintln!("nvcc command: {:?}", fatbin);
+    let status = fatbin.status().expect("nvcc fatbin failed");
+    if !status.success() {
+        panic!("nvcc failed to generate fatbin for {:?}", ll_file);
+    }
+}
+fn compile_llvm_ir_for_cpu(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
     println!("cargo:rerun-if-changed=src/llvm/{}", ll_file.display());
 
     // .ll needs to be lowered (vectorized ?) by opt
@@ -28,7 +99,7 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
 
     if !status.success() {
         panic!(
-            "opt failed to lower matrix intrinsics in LLVM IR file: {:?}",
+            "opt failed to lower matrix intrinsics in LLVM IR for CPU, file: {:?}",
             ll_file
         );
     }
@@ -50,9 +121,9 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
          */
         .arg("-fp-contract=fast")
         /* this param have effect only on manualy generated/unrolled IR,
-                    in other terms, it will not affect api call @llvm.matrix.column.major.load/store
-                    unrolled(4x4)	Row (row-major)	        5.933 ns	inherent row-major access pattern and thus the generated code is faster.
-                    unrolled(4x4)	Column (column-major)	16.393 ns	conflicts with the unrolled code with row-major access pattern.
+            in other terms, it will not affect api call @llvm.matrix.column.major.load/store
+            unrolled(4x4)	Row (row-major)	        5.933 ns	inherent row-major access pattern and thus the generated code is faster.
+            unrolled(4x4)	Column (column-major)	16.393 ns	conflicts with the unrolled code with row-major access pattern.
         */
         .arg("--matrix-default-layout=row-major") // row-major
         .arg("-o")
@@ -76,7 +147,7 @@ fn compile_llvm_ir(ll_file: &PathBuf, obj_file: &PathBuf, is_debug: bool) {
         .expect("Failed to execute llc. Make sure LLVM llc is installed and in PATH.");
 
     if !status.success() {
-        panic!("llc failed to compile LLVM IR file: {:?}", ll_file);
+        panic!("llc failed to compile LLVM IR for CPU, file: {:?}", ll_file);
     }
 }
 
@@ -101,8 +172,49 @@ fn main() {
 
     let matmul_4x4_ll = manifest_dir.join("src/llvm/matmul_4x4.ll");
     let matmul_4x4_obj = out_dir.join("matmul_4x4.o");
-    compile_llvm_ir(&matmul_4x4_ll, &matmul_4x4_obj, is_debug);
+    compile_llvm_ir_for_cpu(&matmul_4x4_ll, &matmul_4x4_obj, is_debug);
 
     // link with all .o files
     println!("cargo:rustc-link-arg={}", matmul_4x4_obj.display());
+
+    #[cfg(feature = "gpu")]
+    {
+        let matmul_file = manifest_dir.join("src/llvm/gpu/matmul_for_gpu.ll");
+        let matmul_fatbin = out_dir.join("matmul_for_gpu.fatbin");
+        compile_llvm_ir_for_gpu(&matmul_file, &matmul_fatbin);
+        // Link against CUDA Driver API (libcuda.so)
+        // Check common CUDA installation paths
+        let common_cuda_lib_paths = vec![
+            //"/usr/local/cuda/lib64",
+            //"/usr/lib/x86_64-linux-gnu",
+            //"/usr/lib64",
+            //"/opt/cuda/lib64",
+            "",
+        ];
+
+        for path in common_cuda_lib_paths {
+            if std::path::Path::new(path).exists() {
+                println!("cargo:rustc-link-search=native={}", path);
+            }
+        }
+
+        // Also check CUDA_PATH environment variable if set
+        if let Ok(cuda_path) = env::var("CUDA_PATH") {
+            for path in [
+                format!("{}", cuda_path),
+                format!("{}/lib64", cuda_path),
+                format!("{}/lib", cuda_path),
+            ] {
+                if std::path::Path::new(&path).exists() {
+                    println!("cargo:rustc-link-search=native={}", path);
+                }
+            }
+        }
+
+        // link with all .o files
+        //println!("cargo:rustc-link-arg={}", matmul_fatbin.display());
+
+        // Tell cargo to link against libcuda
+        println!("cargo:rustc-link-lib=dylib=cuda");
+    }
 }

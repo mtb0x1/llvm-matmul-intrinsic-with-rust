@@ -1,4 +1,4 @@
-define void @ll_matmul_jit(float* %a, float* %b, float* %result) {
+define void @ll_matmul_cpu_jit(float* %a, float* %b, float* %result) {
 entry:
   %m.vec.limit = and i32 {M}, -8
   br label %loop.j.head

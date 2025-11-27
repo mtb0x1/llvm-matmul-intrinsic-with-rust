@@ -54,18 +54,20 @@ jobs:
       - name: Bench (4x4)
         run: |
           cargo bench --bench matmul_4x4_bench
-      - name: Bench (4x4 JIT Template Unrolled)
+
+      - name: Bench (4x4 CPU JIT Template Unrolled)
         run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_4x4_bench
+
 
       - name: Bench (Large)
         run: |
           cargo bench --bench matmul_bench -- matmul_small_32x32
-          #cargo bench --bench matmul_bench -- matmul_mid_512x512
-          #cargo bench --bench matmul_bench -- matmul_big_1024x1024
+          cargo bench --bench matmul_bench -- matmul_mid_512x512
+          cargo bench --bench matmul_bench -- matmul_big_1024x1024
 
-      - name: Bench (Large JIT Template Unrolled)
+      - name: Bench (Large CPU JIT Template Unrolled)
         run: |
           LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_bench -- matmul_small_32x32
-          #cargo bench --bench matmul_bench -- matmul_mid_512x512
-          #cargo bench --bench matmul_bench -- matmul_big_1024x1024
+          LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_bench -- matmul_mid_512x512
+          LL_MATMUL_TEMPLATE=src/llvm/matmul_unrolled.tmpl cargo bench --bench matmul_bench -- matmul_big_1024x1024

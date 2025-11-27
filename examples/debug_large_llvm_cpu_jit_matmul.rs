@@ -1,4 +1,4 @@
-use llvm_matmul_intrinsic_with_rust::{
+use llvm_intrinsic_with_rust::{
     common::{assert_vec_eq, generate_random_matrix, native_matmul},
     ll_matmul_jit_with_template,
 };
@@ -48,7 +48,7 @@ fn main() {
         let size = args[1].parse().expect("Invalid size argument");
         if size > THRESHOLD {
             eprintln!(
-                "\n ===> Danger zone: size might cause OOM (check comments above) {} <=== \n",
+                "\n ===> Danger zone: size might cause OOM (check comments above) (threshold: {}) <=== \n",
                 THRESHOLD
             );
         }
